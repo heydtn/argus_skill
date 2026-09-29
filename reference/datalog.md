@@ -112,6 +112,10 @@ relation you declare with a name `imports.dl` also declares is an error
    assumptions and limits. Extractor facts, key comparisons and precision
    filters live here. A word two analyses use moves to `clientlib/`.
 
+Write top down (SKILL.md, "IMPORTANT: write rules top down"): the
+detection rule first, then each word in more specific shared words, down
+to the extractor facts at the bottom.
+
 Predicates are verb phrases, subject first (`fails_if_row_missing(use,
 func)`). A new word may not reuse a name at another arity. A refactor
 changes no finding, field for field. A precision change is its own commit,

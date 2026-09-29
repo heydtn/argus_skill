@@ -34,8 +34,8 @@ it by name.
 
 ## Contents
 
-- `SKILL.md`: the demand-driven rule, the workflow, argus's principles,
-  and the rules that bit before.
+- `SKILL.md`: the demand-driven and top-down rules, the workflow,
+  argus's principles, and the rules that bit before.
 - `reference/argus-layout.md`: where argus's code and docs are, and which
   built-in analysis to copy.
 - `reference/extractors.md`: the extractor contract and the shared

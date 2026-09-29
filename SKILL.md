@@ -22,38 +22,76 @@ Argus's source is the authority where they disagree: its repo, or
 ## CRITICAL: make rules demand-driven
 
 One of the most important rules here. Derive a relation only for the
-rows some detection rule will read, never for the whole program with a
-filter afterwards. A walk, closure or value flow over every function,
-site or value grows with the program (a closure with its square); one
-over what the bug asks about grows with the few things that matter.
+rows a detection rule reads, never for the whole program and then
+filtered: a walk over everything grows with the program (a closure with
+its square), one over what the bug asks about with the few things that
+matter.
 
-- **Seed every walk from what the bug is about**: the sinks, handlers,
-  sources or sites the detection rule names, not every function. Use the
-  seeded forms of the shared words (a reach component's `seed`,
-  `order.dl`'s `RunsAfter` `asked`, `escape.dl`'s `asked`). Never read
-  `call_reachable`: it is the full closure (17M rows from 100k edges on
-  one project, ~500 MB per solve), and no built-in reads it any more.
-- **A word that answers "for any f" takes a demand relation.** Its
-  consumers seed it, every rule of the word starts from it, and it grows
-  only where the question does. `calls.dl`'s `site_demand` is the model:
-  `blocking.dl` seeds it (`site_demand(h) :- handle_call_function(_, h).`),
-  and it follows only the callees a demanded function enters
-  (`site_demand(g) :- site_demand(f), call_instr(f, g, _), literal_entry(f, g, _).`).
-  A stage writes only what the analyses ask about: `points_to.dl` stages
-  `source_process` for the sources the rules name, not every source.
-- **Join the demand before the recursion**, so the fixpoint never
-  derives a row no finding can use. Filtering an unrestricted fixpoint's
-  output pays its whole cost and throws most of it away.
-- **Write the demand by hand.** Argus tried a magic-set stage (Soufflé's
-  `-m`) on Ash and rejected it; what it ships are demand relations named
-  for what the rules ask.
-- **Where demand cannot reach, say why.** Soufflé allows no negation
-  within a recursive SCC, so a word a walk negates cannot take its demand
-  from that walk (`calls.dl`'s `literal_first`). Keep such a word
-  non-recursive and cheap, and say in its comment why it is not narrowed.
-- **Demand changes cost, never findings.** Every row a rule reads is the
-  same as without it, and seeding too little is a coverage loss ("Keep
-  coverage in mind", below). Check by identity (Workflow, step 7).
+- **Seed walks from what the bug names** (its sinks, handlers, sources,
+  sites) through the seeded shared words: a reach component's `seed`,
+  `RunsAfter`'s and `escape.dl`'s `asked`. Never read `call_reachable`,
+  the full closure (17M rows from 100k edges, ~500 MB a solve); no
+  built-in does.
+- **A word that answers "for any f" takes a demand relation** its
+  consumers seed and each of its rules starts from. The model is
+  `calls.dl`'s `site_demand`: `blocking.dl` seeds it with
+  `site_demand(h) :- handle_call_function(_, h).`, and it grows only
+  along callees a demanded function enters (`literal_entry`). A stage
+  writes only what the analyses ask about (`points_to.dl`'s
+  `source_process`).
+- **Join the demand before the recursion.** Filtering a fixpoint's
+  output pays its whole cost.
+- **Write the demand by hand.** Argus tried Soufflé's magic sets (`-m`)
+  on Ash and rejected them.
+- **Where demand cannot reach, say why.** A word a walk negates cannot
+  take its demand from that walk (no negation within a recursive SCC;
+  `calls.dl`'s `literal_first`): keep it non-recursive and cheap, and
+  comment why.
+- **Demand changes cost, never findings.** Seeding too little loses
+  coverage ("Keep coverage in mind", below); check by identity
+  (Workflow, step 7).
+
+## IMPORTANT: write rules top down
+
+Next to demand, the most important rule. Write the detection rule as
+the bug's high-level concept (rule-style.md) and get more specific only
+by drilling into shared predicates, each defined in a few more specific
+words; only the bottom level reads extractor facts, keys and string
+tests. From `races.dl`:
+
+```prolog
+// The bug, in its words.
+missing_row_race(func, check, use, remove, row) :-
+  checks_row_exists(check),
+  decides(func, check, use, row),
+  fails_if_row_missing(use, func),
+  on_shared_table(use),
+  removes_row(remove, row),
+  runs_in_another_process(remove, func).
+
+// One level down.
+removes_row(remove, [table, ks, k]) :-
+  removes_rows(remove, table),
+  !keyed_apart(remove, ks, k).
+
+// The bottom: extractor facts.
+removes_rows(d, [tk, t]) :-
+  ets_op(d, _, _, op, _),
+  ets_removal_op(op),
+  ets_table(d, tk, t).
+```
+
+- **Top first**, naming words not yet written; then each word; then
+  theirs. Built bottom up, a rule ends as the facts joined in one body.
+- **Reuse a word at every level** (`clientlib/`, the analysis's, a reach
+  component; `docs/bug-classes.md`, Vocabulary) instead of re-deriving
+  it (Workflow, step 2). One two analyses need moves to `clientlib/`.
+- **One level per body.** Over seven atoms, a comment explaining a join,
+  or a domain word beside a fact test means a word is missing.
+- **Each predicate's meaning** in one sentence above its `.decl`, then
+  assumptions and limits, so a reader can stop at any level.
+- **Demand flows down**: a costly word takes what the level above asks
+  about as its demand (`races.dl`: `runs.seed(h) :- remover_in(_, h).`).
 
 ## Read first
 
@@ -89,8 +127,8 @@ over what the bug asks about grows with the few things that matter.
 3. **Write the extractor** on `Argus.Extractor.ValueFlow`, `Helpers.cfg/3`,
    `CallSites`, `Instr`, `Facts`, `Terms` (see extractors reference).
    Declare every relation in `relations/0`.
-4. **Write the rules**, demand-driven (above), in the three layers of
-   rule-style.md: a report relation (`.output`, an ABI), a detection
+4. **Write the rules**, demand-driven and top down (above), in the
+   three layers of rule-style.md: a report relation (`.output`, an ABI), a detection
    rule named for the bug (three to seven lines, domain words only), and
    the words below it.
 5. **Write the analysis module.**

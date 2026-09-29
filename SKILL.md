@@ -170,9 +170,11 @@ removes_rows(d, [tk, t]) :-
 8. **CI.** Argus's own CI installs Soufflé from the Ubuntu PPA, which
    is 2.4, so a built-in's rules must compile under 2.4. It rejects a
    bare `_` inside a destructured record or ADT (`arguments = [value, _]`
-   is "Ungrounded"); name it (`[value, _rest]`). A package outside argus
-   can run 2.5 in CI (outside-analysis reference). Either way, CI on x86
-   catches unguarded divisions (below).
+   is "Ungrounded"); name it (`[value, _rest]`). Name it on 2.5 too:
+   there an `inline` relation with one silently loses rows when inlined
+   into a rule with one (datalog.md, Soufflé traps). A package outside
+   argus can run 2.5 in CI (outside-analysis reference). Either way, CI
+   on x86 catches unguarded divisions (below).
 
 ## Argus's own principles
 
@@ -218,10 +220,22 @@ it.
 - **A `.plan` can move a functor ahead of its guard.** `to_number(substr(...))`
   behind a `match(...)` crashes on `""` once a plan reorders the atoms.
   Leave such rules unplanned, or make the functor total.
+- **`to_float` and `to_number` on an out-of-range spelling abort the
+  whole solve.** Floats are 32-bit, so an Elixir literal like `1.0e-40`
+  does it. Guard with a regex that admits only the safe range, and call
+  the functor in a non-inline relation's head (datalog.md, Soufflé traps).
 - **Recursive rules must start from their delta.** The biggest speed
   lever after demand: lead with the recursive atom whose new facts should fire the
   rule, and `.plan` the other versions from their own delta atom. This
   took one analysis from 12.8s to 4.3s with identical output.
+- **Compile time grows with relations × program size.** Every declared
+  relation costs, used or not; `inline`, components and `-j` don't help.
+  With no `<=` clause, `.pragma "disable-transformers"
+  "SubsumptionQualifierTransformer"` cut 10.9s to 7.0s, same output.
+- **Near-identical clauses in one relation blow up compile time** (41s,
+  from inlining). Materialize the shared part over a demand relation,
+  and write a family of similar rules as a fact table plus one rule
+  (datalog.md, Performance).
 - **Pass `stage0: :provided` to `run_rules/3` after `derive_stage0/2`.**
   Otherwise it compiles your whole program just to learn whether it reads
   process points-to (seconds).

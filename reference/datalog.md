@@ -123,13 +123,35 @@ with the findings it moves listed.
 
 ## Soufflé traps (2.5)
 
-- **Soufflé 2.4 and 2.5 differ on `_`.** 2.4 rejects `_` inside a
-  destructured record or ADT (`value = $Object(_, _, _)`, `arguments =
-  [value, _]`) as "Ungrounded" (fixed in 2.5 by
-  souffle-lang/souffle#2483). Argus's CI installs 2.4 from the Ubuntu
-  PPA, so a built-in names those variables (`[value, _rest]`: a name
-  starting with `_` draws no singleton warning). A package outside argus
-  can require 2.5 instead.
+- **Name every `_` inside a record or ADT pattern, on 2.4 and 2.5**:
+  `[value, _rest]`, not `[value, _]` (a name starting with `_` draws no
+  singleton warning).
+  - 2.4 rejects a bare one (`value = $Object(_, _, _)`, `arguments =
+    [value, _]`) as "Ungrounded" (fixed in 2.5 by
+    souffle-lang/souffle#2483), and argus's CI installs 2.4 from the
+    Ubuntu PPA.
+  - 2.5 accepts it, but its inliner silently drops rows: an `inline`
+    relation whose body has `_` inside a record, inlined into a rule
+    that also has one, loses the rows those clauses derive.
+
+    ```prolog
+    .decl compatible(left: Size, right: Size) inline
+    compatible(left, right) :- left = right.
+    compatible(left, right) :- left = [0, nil], right = [_, _].
+    compatible(left, right) :- left = [_, _], right = [0, nil].
+
+    found(first, left, right) :-
+      given(operands, left, right), operands = [first, second, _],
+      compatible(left, right).
+    ```
+
+    With `Size = [coefficient: number, factors: Factors]` and `given`
+    holding `(["a", "b", "c"], [0, nil], [3, nil])`, `(…, [4, nil], [0,
+    nil])` and `(…, [5, nil], [5, nil])`, `found` keeps only the last,
+    the row `left = right` derives. Naming the wildcards on either side
+    (`right = [_coefficient, _factors]`, or `operands = [first, second,
+    third]`), or materializing `compatible` over `given`, keeps all
+    three.
 - **Conditions are reordered.** A guard does not protect arithmetic in
   the same rule, nor in a recursive rule's head (the head tuple is part
   of the not-yet-derived test). Divide by `max(d, 1)` where the rule
@@ -141,6 +163,51 @@ with the findings it moves listed.
   `path_steps(path, ...)` (which does `to_number(substr(path, ...))`)
   before the `match` that guards it crashes on `""`. Leave such a rule
   unplanned, or make the functor total.
+- **`to_float` and `to_number` on a bad spelling abort the whole solve**:
+  "wrong string provided by `to_number(...)` functor", then
+  "Floating-point arithmetic exception signal in rule".
+  - Floats and numbers are 32-bit in the default build (`souffle
+    --version` says "Word size: 32 bits"). `to_float` aborts outside
+    f32's normal range: past about 3.4e38, or nonzero below about
+    1.18e-38 (`"1e-39"`). Elixir floats are f64, so literals like
+    `1.0e-40` and `1.0e300` are valid code, and their spellings reach
+    the rules.
+  - `to_number` aborts on a string that does not start with an integer
+    in ±2147483647 (`""`, `"2147483648"`); it drops what follows one
+    (`"1.5"` gives 1). A round trip hits it: `to_number(to_string(x))`
+    for the float 1.0e20 reads `"100000002004087734272.000000"`.
+  - Guard every spelled conversion with a regex that admits only the
+    safe range, and put the functor in the head of a non-inline relation
+    outside any recursion: a guard does not protect a functor in the
+    same body ("Conditions are reordered", above). For floats:
+
+    ```prolog
+    // A spelling to_float reads without aborting: zero or f32's normal range.
+    .decl in_float_range(text: symbol)
+    in_float_range(text) :- spelled(text), match("-?[0-9]{1,38}([.][0-9]{1,37})?", text).
+    in_float_range(text) :- spelled(text), match("-?[1-9]([.][0-9]+)?e-?([0-9]|[12][0-9]|3[0-7])", text).
+
+    .decl spelled_float(text: symbol, value: float)
+    spelled_float(text, to_float(text)) :- in_float_range(text).
+    ```
+
+    For integers, `match("-?[0-9]{1,9}", text)`.
+  - Where a comparison still needs a spelling the guard rejects, read it
+    as the nearest value in range: past the range, the largest the guard
+    admits, with its sign; below it, `0.0`.
+  - Test whether a float is whole with the numeric overload and a clamp,
+    never a string round trip:
+
+    ```prolog
+    fractional(x) :-
+      value(x), clamped = min(max(x, -1000000000.0), 1000000000.0),
+      to_float(to_number(clamped)) != clamped.
+    ```
+
+    `to_number` of a float outside the 32-bit range is undefined in C++
+    (it saturates on ARM), and every f32 past 2^24 is whole, so the clamp
+    loses nothing. Soufflé has no exponent literals: `1.0e9` is a syntax
+    error.
 - Reserved words cannot name variables or relations: `count`, `sum`,
   `min`, `max`, `mean`, `output`, `input`, `choice`.
 - Inline relations (`.decl r(...) inline`) work only when used positively.
@@ -187,6 +254,20 @@ lists the SCCs.
 and the join both grow k times. Test a condition on a few columns with a
 small relation instead (argus's `check_then_act.dl` has `may_agree`).
 
+**Near-identical clauses blow up `MinimiseProgramTransformer`.** Dozens
+of them in one relation (`in_region` rules, many made by inlining
+`inline` relations into rules) took one compile to 41s. Restructuring
+brought it back with identical output:
+
+- Materialize a part many clauses share over a demand relation, instead
+  of inlining it into each.
+- Write a family of similar rules as a static table: a fact table plus
+  one rule that reads it.
+- Keep a fact table to a few hundred rows: the pass is quadratic in one
+  relation's facts too. Standalone, 1,500 facts in one relation took
+  0.23s and 3,000 took 0.91s (0.09s with the pass disabled, `-z
+  MinimiseProgramTransformer`).
+
 **Measure cold runs with `ARGUS_NO_CACHE=1`.** In argus's repo, the suite
 and the driver keep facts and solves in a blob store, so a second run
 measures the cache. `ARGUS_NO_CACHE=1` gives every run a temporary
@@ -194,14 +275,57 @@ store.
 
 **The fixed cost is Soufflé preparing the program**, not the data.
 Solve over empty facts to measure it (same `.facts` files, all empty).
-Two passes grow with relations × program size: `SemanticChecker` and
-`SubsumptionQualifierTransformer` each scan the whole program once per
-relation. So every declared relation costs compile time, including the
-unused ones `imports.dl` brings in (hundreds). Compiled mode (`souffle
--o`) removes the preparation from each run, but builds one large C++
-translation unit on one core, which takes a long time for a large
-program. Its dominant file is the main recursive stratum, so `-G` plus a
-parallel build helps only partly.
+Compiled mode (`souffle -o`) removes the preparation from each run, but
+builds one large C++ translation unit on one core, which takes a long
+time for a large program. Its dominant file is the main recursive
+stratum, so `-G` plus a parallel build helps only partly.
+
+**Measure compile cost in instructions retired**, not wall time, which
+moves with load. On macOS, `/usr/bin/time -l souffle ...` reports them,
+repeatable to about ±0.5% (1G instructions was about 0.09s on the
+machine measured). `souffle -v` prints each pass's time: find the pass
+before changing the program.
+
+**Two front-end passes dominate preparation**: `SemanticChecker` and
+`SubsumptionQualifierTransformer` took 72% of a 10.9s compile in Soufflé
+2.5. Each walks the whole AST once per relation, so together they cost
+about 584 instructions × R × N, with R the relations after `.init`
+expansion and N the AST nodes (declarations, facts and rules alike).
+That fit 14 programs from 0.5G to 147G instructions with R² 0.995. So:
+
+- Every declared relation costs, used or not (about 4.7ms each in a
+  94k-node program), including the unused ones `imports.dl` brings in
+  (hundreds). Soufflé drops them only after these passes.
+- Facts cost like rule nodes: a fact is 3–5 nodes, a rule about 20.
+- `inline` does not help: these passes run before inlining.
+- A component costs exactly what its expansion costs.
+- `.plan` is about neutral.
+- `-j` does nothing: the front end is single-threaded.
+- Shared predicates and merged relations cut both factors.
+- `--show=transformed-ram` pays the same cost: the division audit
+  above, and argus's `Argus.Souffle.input_relations`/`ram_io`.
+
+**Disable `SubsumptionQualifierTransformer` when the program has no
+subsumptive (`<=`) clause:**
+
+```prolog
+.pragma "disable-transformers" "SubsumptionQualifierTransformer"
+```
+
+It gave identical RAM and outputs and cut the 10.9s compile to 7.0s.
+Under it, a `<=` clause is an error ("has one or more subsumptive rules
+and relational representation "btree_delete" is missing"), not a silent
+change, whether it is there now or added later. `imports.dl` brings in
+none; argus's `blocking.dl` has some.
+
+**Keep `SemanticChecker` unless tests run the exact program with it.**
+It only reports errors in the program text (undeclared relations,
+types, grounding, stratification): disabling it as well gave identical
+RAM and took the compile to 3.0s. Its checks are a property of the
+program, not the facts, so disabling it for shipped rules is reasonable
+only when tests or CI always solve that exact program with it enabled.
+Without it, an undeclared relation segfaulted, and `b(x) :- a(x),
+!b(x).` solved without complaint.
 
 **`run_rules/3` defaults are costly for a custom program**: without
 `stage0: :provided` it compiles the whole program once just to learn

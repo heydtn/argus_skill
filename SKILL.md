@@ -230,8 +230,12 @@ it.
   took one analysis from 12.8s to 4.3s with identical output.
 - **Compile time grows with relations × program size.** Every declared
   relation costs, used or not; `inline`, components and `-j` don't help.
-  With no `<=` clause, `.pragma "disable-transformers"
-  "SubsumptionQualifierTransformer"` cut 10.9s to 7.0s, same output.
+  Share predicates and merge relations instead. Disabling the two passes
+  behind that cost looks like an optimization, and is not one: argus
+  relies on subsumptive (`<=`) clauses, which
+  `SubsumptionQualifierTransformer` handles, and without
+  `SemanticChecker` a broken program segfaults or solves silently wrong
+  (datalog.md, Performance).
 - **Near-identical clauses in one relation blow up compile time** (41s,
   from inlining). Materialize the shared part over a demand relation,
   and write a family of similar rules as a fact table plus one rule

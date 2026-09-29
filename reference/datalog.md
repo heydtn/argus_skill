@@ -305,27 +305,19 @@ That fit 14 programs from 0.5G to 147G instructions with R² 0.995. So:
 - `--show=transformed-ram` pays the same cost: the division audit
   above, and argus's `Argus.Souffle.input_relations`/`ram_io`.
 
-**Disable `SubsumptionQualifierTransformer` when the program has no
-subsumptive (`<=`) clause:**
+**Never disable either pass.** Turning them off with
+`.pragma "disable-transformers" ...` looks like the biggest lever on
+this cost, and it is not available:
 
-```prolog
-.pragma "disable-transformers" "SubsumptionQualifierTransformer"
-```
+- `SubsumptionQualifierTransformer` is what makes subsumptive (`<=`)
+  clauses work, and argus relies on them (`blocking.dl` has them). Keep
+  it for every program built on argus.
+- `SemanticChecker` is what catches a broken program. Without it, an
+  undeclared relation segfaulted, and a negation cycle (`b(x) :- a(x),
+  !b(x).`) solved without complaint, to wrong rows.
 
-It gave identical RAM and outputs and cut the 10.9s compile to 7.0s.
-Under it, a `<=` clause is an error ("has one or more subsumptive rules
-and relational representation "btree_delete" is missing"), not a silent
-change, whether it is there now or added later. `imports.dl` brings in
-none; argus's `blocking.dl` has some.
-
-**Keep `SemanticChecker` unless tests run the exact program with it.**
-It only reports errors in the program text (undeclared relations,
-types, grounding, stratification): disabling it as well gave identical
-RAM and took the compile to 3.0s. Its checks are a property of the
-program, not the facts, so disabling it for shipped rules is reasonable
-only when tests or CI always solve that exact program with it enabled.
-Without it, an undeclared relation segfaulted, and `b(x) :- a(x),
-!b(x).` solved without complaint.
+Cut relations and AST nodes instead: shared predicates, merged
+relations, fewer copies of the same concept.
 
 **`run_rules/3` defaults are costly for a custom program**: without
 `stage0: :provided` it compiles the whole program once just to learn

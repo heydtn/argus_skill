@@ -60,8 +60,8 @@ fun_handed_to(caller, fun, callee)
 
 `imports.dl` adds `call_instr(func, callee, id)` (the instruction behind
 an edge into a project function), `in_module(func, mod)` (inline),
-`call_reachable` (the full closure, quadratic, pruned unless read), and
-`closure_count`.
+`call_reachable` (the full closure, quadratic, pruned unless read: do
+not read it, seed a reach component instead), and `closure_count`.
 
 A call of a protocol's function is a `call_site` to the protocol module.
 Nothing shared resolves it to the program's implementations;
@@ -149,7 +149,14 @@ with the findings it moves listed.
 
 ## Performance
 
-**Delta-first join order is the lever.** In semi-naive evaluation every
+**Demand comes first.** Derive a relation only for what the detection
+rules ask about (SKILL.md, "CRITICAL: make rules demand-driven"): seed
+walks from the sites the bug names, give a shared word a demand relation
+its consumers seed (`calls.dl`'s `site_demand`), and stage only what the
+analyses read. The levers below make a fixpoint cheaper; demand decides
+how many rows it derives at all.
+
+**Delta-first join order is the lever inside a recursion.** In semi-naive evaluation every
 recursive rule runs once per iteration per version, one version per
 recursive atom. A version that reads a large relation before its delta
 rescans it every iteration. Lead each recursive rule with the atom whose

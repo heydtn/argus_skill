@@ -19,6 +19,42 @@ Written against argus 0.20.1 (Elixir 1.19 or later) and Soufflé 2.5.
 Argus's source is the authority where they disagree: its repo, or
 `deps/argus_beam` in a project that depends on it.
 
+## CRITICAL: make rules demand-driven
+
+One of the most important rules here. Derive a relation only for the
+rows some detection rule will read, never for the whole program with a
+filter afterwards. A walk, closure or value flow over every function,
+site or value grows with the program (a closure with its square); one
+over what the bug asks about grows with the few things that matter.
+
+- **Seed every walk from what the bug is about**: the sinks, handlers,
+  sources or sites the detection rule names, not every function. Use the
+  seeded forms of the shared words (a reach component's `seed`,
+  `order.dl`'s `RunsAfter` `asked`, `escape.dl`'s `asked`). Never read
+  `call_reachable`: it is the full closure (17M rows from 100k edges on
+  one project, ~500 MB per solve), and no built-in reads it any more.
+- **A word that answers "for any f" takes a demand relation.** Its
+  consumers seed it, every rule of the word starts from it, and it grows
+  only where the question does. `calls.dl`'s `site_demand` is the model:
+  `blocking.dl` seeds it (`site_demand(h) :- handle_call_function(_, h).`),
+  and it follows only the callees a demanded function enters
+  (`site_demand(g) :- site_demand(f), call_instr(f, g, _), literal_entry(f, g, _).`).
+  A stage writes only what the analyses ask about: `points_to.dl` stages
+  `source_process` for the sources the rules name, not every source.
+- **Join the demand before the recursion**, so the fixpoint never
+  derives a row no finding can use. Filtering an unrestricted fixpoint's
+  output pays its whole cost and throws most of it away.
+- **Write the demand by hand.** Argus tried a magic-set stage (Soufflé's
+  `-m`) on Ash and rejected it; what it ships are demand relations named
+  for what the rules ask.
+- **Where demand cannot reach, say why.** Soufflé allows no negation
+  within a recursive SCC, so a word a walk negates cannot take its demand
+  from that walk (`calls.dl`'s `literal_first`). Keep such a word
+  non-recursive and cheap, and say in its comment why it is not narrowed.
+- **Demand changes cost, never findings.** Every row a rule reads is the
+  same as without it, and seeding too little is a coverage loss ("Keep
+  coverage in mind", below). Check by identity (Workflow, step 7).
+
 ## Read first
 
 - Argus's `CLAUDE.md` (in its repo, where Claude Code loads it on its
@@ -53,9 +89,10 @@ Argus's source is the authority where they disagree: its repo, or
 3. **Write the extractor** on `Argus.Extractor.ValueFlow`, `Helpers.cfg/3`,
    `CallSites`, `Instr`, `Facts`, `Terms` (see extractors reference).
    Declare every relation in `relations/0`.
-4. **Write the rules** in the three layers of rule-style.md: a report
-   relation (`.output`, an ABI), a detection rule named for the bug
-   (three to seven lines, domain words only), and the words below it.
+4. **Write the rules**, demand-driven (above), in the three layers of
+   rule-style.md: a report relation (`.output`, an ABI), a detection
+   rule named for the bug (three to seven lines, domain words only), and
+   the words below it.
 5. **Write the analysis module.**
    - A built-in (in argus's repo): the module in `lib/argus/analyses/`, its program in
      `priv/dl/analyses/` (from `.include "../clientlib/imports.dl"`). A
@@ -144,7 +181,7 @@ it.
   behind a `match(...)` crashes on `""` once a plan reorders the atoms.
   Leave such rules unplanned, or make the functor total.
 - **Recursive rules must start from their delta.** The biggest speed
-  lever: lead with the recursive atom whose new facts should fire the
+  lever after demand: lead with the recursive atom whose new facts should fire the
   rule, and `.plan` the other versions from their own delta atom. This
   took one analysis from 12.8s to 4.3s with identical output.
 - **Pass `stage0: :provided` to `run_rules/3` after `derive_stage0/2`.**

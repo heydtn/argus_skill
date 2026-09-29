@@ -265,8 +265,7 @@ brought it back with identical output:
   one rule that reads it.
 - Keep a fact table to a few hundred rows: the pass is quadratic in one
   relation's facts too. Standalone, 1,500 facts in one relation took
-  0.23s and 3,000 took 0.91s (0.09s with the pass disabled, `-z
-  MinimiseProgramTransformer`).
+  0.23s and 3,000 took 0.91s, nearly all of it in this pass.
 
 **Measure cold runs with `ARGUS_NO_CACHE=1`.** In argus's repo, the suite
 and the driver keep facts and solves in a blob store, so a second run

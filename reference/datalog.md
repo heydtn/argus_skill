@@ -281,6 +281,19 @@ this cost, and it is not available:
 Cut relations and AST nodes instead: shared predicates, merged
 relations, fewer copies of the same concept.
 
+**An outside package can include less of argus.** `imports.dl` declares
+hundreds of relations a program may never read, and each costs the two
+passes above. Once a package's rules settle, include only the argus
+files it reads whole (`base.dl`, and `clientlib/reach.dl` for the reach
+components), and copy the few other words it reads (the stage-0
+declarations it uses, `call_instr`, `program_module`) into a file of its
+own. That file belongs in the program's include chain, so the solve
+cache's key covers it. Add a test that each copied statement still
+appears in argus's `priv/dl`, word for word (comments dropped,
+whitespace collapsed), so an argus release that changes one fails the
+test instead of solving on. This cut argus_nx_tensor_analyses' compile by
+13%, with identical output.
+
 **`run_rules/3` defaults are costly for a custom program**: without
 `stage0: :provided` it compiles the whole program once just to learn
 whether it reads points-to. Derive stage 0 yourself (`derive_stage0/2`,

@@ -112,7 +112,8 @@ end
 defp solve_rules(directory, program) do
   wrapper = directory <> ".dl"
   # Soufflé resolves an .include against the including file; argus's files
-  # are wherever Mix put the dependency.
+  # are wherever Mix put the dependency. Once the rules settle, include
+  # less of argus (datalog.md, Performance).
   File.write!(wrapper, """
   .include "#{Application.app_dir(:argus_beam, "priv/dl/clientlib/imports.dl")}"
   .include "#{Path.expand(program)}"

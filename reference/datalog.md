@@ -4,122 +4,89 @@
 
 Include `clientlib/imports.dl`: a built-in writes `.include
 "../clientlib/imports.dl"`, and an outside package includes it from
-`deps/argus_beam/priv/dl/` (see outside-analysis.md). It brings
-`base.dl` + `layer2.dl` (every fact declaration), `priors.dl`, the
-staged call graph, and the shared words (`reach.dl`, `closures.dl`,
-`generated.dl`, ...). Relations a program never reads cost nothing at run
-time, because Soufflé drops them before evaluating. They do cost compile
-time: see Performance.
+`deps/argus_beam/priv/dl/` (outside-analysis.md). It brings every fact
+declaration (`base.dl`, `layer2.dl`), `priors.dl`, the staged call graph
+and some shared words (`reach.dl`, `closures.dl`, `generated.dl`, ...);
+include any other clientlib file you read. Relations a program never
+reads cost nothing at run time, but every declared one costs compile
+time (Performance).
 
-### Base facts (`priv/dl/base.dl`, always emitted)
+### Facts
 
 IDs are strings: a function is `"Mod:func/arity"`, an instruction is
-`"Mod:func/arity#idx"`.
+`"Mod:func/arity#idx"`. `priv/dl/base.dl` declares the bytecode facts, a
+comment each: functions (`function_def`, `function_entry`), calls
+(`remote_call`, `local_call`, `bif_call`, `dynamic_call`,
+`resolved_apply`, `spawn_call`, `conditional_call`), funs (`closure_def`,
+`fun_ref`, `fun_handed`), messages and handlers (`send_msg`,
+`recv_start`, `try_start`), values (`literal_value`, `tuple_literal`,
+`type_test`), `line_info`, sites and blocks (`site_block`,
+`block_flow`), and the positional `instruction`, `def`, `use`,
+`def_use` and `next`, which are the bulk: read them only when you need
+them. `layer2.dl` declares what argus's extractors emit (extractors.md).
 
-```
-function_def(func, mod, name, arity, exported)
-function_entry(func, entry)
-remote_call(id, caller, mod, func, arity)
-local_call(id, caller, target, arity)
-bif_call(id, caller, mod, func, arity, fail)
-dynamic_call(id, caller, kind)            // call_fun, apply (and erlang:apply/2,3); no arity
-resolved_apply(id, caller, target)        // an apply whose target the values name (context-insensitive)
-closure_def(parent_func, closure_func)    // make_fun3 to a concrete MFA
-fun_ref(caller, callee)                   // a literal fun handed to a call, not called
-fun_handed(id, caller, callee, pos)       // the call a fun is handed to
-tail_call(id)
-conditional_call(id)                      // not on every completing path
-spawn_call(id, caller, mod, func, arity, variant, api, source, param, args)
-send_msg(id, caller)
-recv_start(id, caller, blocking, fail)
-try_start(id, caller, kind, handler)
-literal_value(id, reg, val)               // a scalar a move writes
-tuple_literal(id, reg, tag, size)         // a tuple with a literal atom head
-type_test(id, test, src, fail)
-line_info(id, line)                       // the source line in effect at an instruction
-instruction(id, func, idx, op)  def(id, reg)  use(id, reg)  def_use(def_id, use_id)
-next(from, to)  jump(id, target)  branch(id, fail, reserved)  select_branch(id, val, target)
-label_at(label, id)  site_block(id, kind, block, idx)  block_flow(from, to)
-```
+### The call graph
 
-`instruction`, `def`, `use` and `def_use` are positional and the bulk of
-the facts: read them only when you need them.
-
-### The call graph (stage 0, `priv/dl/stage0.dl`)
-
-Derived once into the facts dir (`Argus.Analysis.derive_stage0/2`), and
-read as inputs through `imports.dl`:
-
-```
-call_edge(caller, callee)                 // remote, local, BIF calls; closures built; funs handed on; resolved applies
-call_site(id, caller, callee_mod, callee_func, arity)   // calls into project functions, and anchor APIs
-unconditional_call_edge(caller, callee)
-call_tag(id, caller, kind, tag)           // the message tag of a GenServer call/cast
-fun_handed_to(caller, fun, callee)
-```
-
-`imports.dl` adds `call_instr(func, callee, id)` (the instruction behind
-an edge into a project function), `in_module(func, mod)` (inline),
-`call_reachable` (the full closure, quadratic, pruned unless read: do
-not read it, seed a reach component instead), and `closure_count`.
+Stage 0 (`priv/dl/stage0.dl`) derives it once into the facts dir
+(`Argus.Analysis.derive_stage0/2`), and `imports.dl` reads it:
+`call_edge`, `call_site`, `unconditional_call_edge`, `call_tag` and
+`fun_handed_to`, plus `call_instr`, `in_module` and `call_reachable`
+derived there, each with its comment. `call_edge` over-approximates
+execution (analysis-model.md, "Calls are not process execution").
 
 A call of a protocol's function is a `call_site` to the protocol module.
 Nothing shared resolves it to the program's implementations;
 `priv/dl/analyses/unsafe_input.dl` detects `__impl__`/`__protocol__`
 pairs locally.
 
-### Shared words worth knowing (`priv/dl/clientlib/`)
+### Shared words (`priv/dl/clientlib/`)
 
-The Vocabulary section of `docs/bug-classes.md` defines each one, says
-which way it errs, and lists who reads it. The ones a non-process
-analysis reaches for:
+The comment beside each relation is the reference for what it means;
+`docs/design/analysis-model.md` explains the concepts behind the process
+words. The ones a non-process analysis reaches for:
 
-- **Reach components** (`reach.dl`): `.init r = CallReachSet`, seed with
-  `r.seed(f) :- ...`, and read `r.reaches(f)`. Backward forms answer
-  which functions reach a seed; forward ones, what a root reaches. The
-  variants differ in their step: `CallReach`/`CallReachSet` (every
-  `call_edge`), `SameProcessReach` (minus `runs_elsewhere`),
-  `IntraModuleReach`, the `…Cut` forms, `HoldingReach`, `ParamReach`,
-  the bounded forms, `ForwardUnguardedSet`/`BackwardUnguarded`. Seeds
-  can depend on `reaches` (recursion through the instance is fine), so
-  calls the graph does not see become extra seed rules.
-- `closures.dl`: `enclosing_function(func, owner)`, `sole_closure`,
-  `handed_closure(site, func, closure)`.
-- `generated.dl`: `program_module(mod)`, `library_written(func)`.
-- `calls.dl`: `resolved_arg(func, pos, value)` (a literal some caller
-  passes, merged over callers) and the process dependency words.
-- `test_code.dl` / `tooling.dl`: code only tests or developer tools run.
-- `specs.dl`: `callee_returns(f, shape)`.
-- Process points-to (`processes.dl`, staged by `points_to.dl`, read via
-  `staged_processes.dl`): processes and ETS tables only,
-  context-insensitive. A program that reads any of
-  `Argus.Analysis.points_to_relations/0` gets the stage derived.
+- **Reach components** (`reach.dl`; analysis-model.md's table says which
+  to pick): `.init r = CallReachSet`, seed with `r.seed(f) :- ...`, and
+  read `r.reaches(f)`. The backward forms take `seed(func, target)`, the
+  forward ones `root(root, func)`. Seeds can depend on `reaches`
+  (recursion through the instance is fine), so calls the graph does not
+  see become extra seed rules. The forms with `SameProcess` or
+  `Holding` in their name need `runs_elsewhere.dl` included.
+- `closures.dl`: `enclosing_function`, `sole_closure`, `handed_closure`.
+- `generated.dl`: `program_module`, `library_written`.
+- `calls.dl`: `resolved_arg` (a literal some caller passes, merged over
+  callers) and the process dependency words.
+- `test_code.dl`, `tooling.dl`: code only tests or developer tools run.
+- `specs.dl`: `callee_returns`.
+- Process points-to (`processes.dl`, staged by `points_to.dl`, read
+  through `staged_processes.dl`): processes and ETS tables only,
+  context-insensitive. `run_rules/3` derives the stage for a program
+  that reads any of `Argus.Analysis.points_to_relations/0`, unless given
+  `stage0: :provided`.
 
-A clash check before including: Soufflé has no namespaces, so a
-relation you declare with a name `imports.dl` also declares is an error
-(relations inside `.comp` bodies are per instance and don't clash).
+Soufflé has no namespaces: a relation you declare with a name an
+included file also declares is an error (relations inside `.comp` bodies
+are per instance and don't clash).
 
 ## Rule style (`docs/design/rule-style.md`)
 
-1. **Report** (`.output`): joins the detection relation with what a
-   finding shows. Its name and columns are an ABI; no detection logic.
-2. **Detection rule**: named for the bug as a noun; three to seven lines,
-   one idea each, in the order you'd say it; only domain words, no
-   extractor facts, arithmetic or string comparisons of kinds; negations
-   read as sentences; variables named for what they are; one comment
-   above: the bug in a sentence.
-3. **Words**: each atom a relation with a one-sentence comment, then its
-   assumptions and limits. Extractor facts, key comparisons and precision
-   filters live here. A word two analyses use moves to `clientlib/`.
+Read it; it is short and binding. In brief:
 
-Write top down (SKILL.md, "IMPORTANT: write rules top down"): the
-detection rule first, then each word in more specific shared words, down
-to the extractor facts at the bottom.
+1. **Report relation** (`.output`): adds the names, locations and
+   evidence a finding shows. Its name, columns and identity are an
+   interface; it holds no detection logic.
+2. **Detection relation**: the defect in domain words, named for it as a
+   noun, each line one part of the argument.
+3. **Supporting relations**: extractor joins, value identity,
+   reachability, comparisons and precision filters. A concept two
+   analyses share moves to `clientlib/`.
 
-Predicates are verb phrases, subject first (`fails_if_row_missing(use,
-func)`). A new word may not reuse a name at another arity. A refactor
-changes no finding, field for field. A precision change is its own commit,
-with the findings it moves listed.
+Names state the property, subject first (`fails_if_row_missing(use,
+func)`), and a name is never reused at another arity. A comment starts
+with what the relation means. A refactor preserves every finding field;
+a change to which programs are reported stays distinguishable from
+restructuring, with its changed condition and counterexamples. Write top
+down (SKILL.md, "IMPORTANT: write rules top down").
 
 ## Soufflé traps (2.5)
 
@@ -173,7 +140,7 @@ with the findings it moves listed.
     `1.0e-40` and `1.0e300` are valid code, and their spellings reach
     the rules.
   - `to_number` aborts on a string that does not start with an integer
-    in ±2147483647 (`""`, `"2147483648"`); it drops what follows one
+    in ±2147483647 (`""`, `"2147483648"`), and drops what follows one
     (`"1.5"` gives 1). A round trip hits it: `to_number(to_string(x))`
     for the float 1.0e20 reads `"100000002004087734272.000000"`.
   - Guard every spelled conversion with a regex that admits only the
@@ -220,21 +187,19 @@ with the findings it moves listed.
 
 ## Performance
 
-**Demand comes first.** Derive a relation only for what the detection
-rules ask about (SKILL.md, "CRITICAL: make rules demand-driven"): seed
-walks from the sites the bug names, give a shared word a demand relation
-its consumers seed (`calls.dl`'s `site_demand`), and stage only what the
-analyses read. The levers below make a fixpoint cheaper; demand decides
-how many rows it derives at all.
+**Demand comes first** (SKILL.md, "CRITICAL: make rules demand-driven").
+The levers below make a fixpoint cheaper; demand decides how many rows
+it derives at all.
 
-**Delta-first join order is the lever inside a recursion.** In semi-naive evaluation every
-recursive rule runs once per iteration per version, one version per
-recursive atom. A version that reads a large relation before its delta
-rescans it every iteration. Lead each recursive rule with the atom whose
-new facts should fire it, and `.plan` each other version from its own
-delta atom: `.plan 1:(2,1,3), 2:(3,1,2)` (version numbers count
-recursive atoms from 0; the tuple is the body order, atoms from 1). This
-took a 900-iteration fixpoint from 12.8s to 4.3s with identical output.
+**Delta-first join order is the lever inside a recursion.** In
+semi-naive evaluation every recursive rule runs once per iteration per
+version, one version per recursive atom. A version that reads a large
+relation before its delta rescans it every iteration. Lead each
+recursive rule with the atom whose new facts should fire it, and `.plan`
+each other version from its own delta atom: `.plan 1:(2,1,3), 2:(3,1,2)`
+(version numbers count recursive atoms from 0; the tuple is the body
+order, atoms from 1). This took a 900-iteration fixpoint from 12.8s to
+4.3s with identical output.
 
 Find the hot versions with the profiler:
 
@@ -250,9 +215,9 @@ fix those whose delta atom is not first. `souffle --show=scc-graph-text`
 lists the SCCs.
 
 **Disjunctions multiply.** Soufflé expands a rule with k alternatives
-(`( a ; b ; c )`) into k rules, each with the whole body: compile time
-and the join both grow k times. Test a condition on a few columns with a
-small relation instead (argus's `check_then_act.dl` has `may_agree`).
+(`( a ; b ; c )`) into k rules, each with the whole body, so compile
+time and the join both grow k times. Test a condition on a few columns
+with a small relation instead (`check_then_act.dl`'s `may_agree`).
 
 **Near-identical clauses blow up `MinimiseProgramTransformer`.** Dozens
 of them in one relation (`in_region` rules, many made by inlining
@@ -267,17 +232,16 @@ brought it back with identical output:
   relation's facts too. Standalone, 1,500 facts in one relation took
   0.23s and 3,000 took 0.91s, nearly all of it in this pass.
 
-**Measure cold runs with `ARGUS_NO_CACHE=1`.** In argus's repo, the suite
+**Measure cold runs with `ARGUS_NO_CACHE=1`** in argus's repo: the suite
 and the driver keep facts and solves in a blob store, so a second run
-measures the cache. `ARGUS_NO_CACHE=1` gives every run a temporary
-store.
+measures the cache.
 
 **The fixed cost is Soufflé preparing the program**, not the data.
-Solve over empty facts to measure it (same `.facts` files, all empty).
-Compiled mode (`souffle -o`) removes the preparation from each run, but
-builds one large C++ translation unit on one core, which takes a long
-time for a large program. Its dominant file is the main recursive
-stratum, so `-G` plus a parallel build helps only partly.
+Solve over empty facts (the same `.facts` files, all empty) to measure
+it. Compiled mode (`souffle -o`) removes the preparation from each run,
+but builds one large C++ translation unit on one core, which is slow for
+a large program; `-G` plus a parallel build helps only partly, since the
+main recursive stratum dominates.
 
 **Measure compile cost in instructions retired**, not wall time, which
 moves with load. On macOS, `/usr/bin/time -l souffle ...` reports them,
@@ -289,18 +253,17 @@ before changing the program.
 `SubsumptionQualifierTransformer` took 72% of a 10.9s compile in Soufflé
 2.5. Each walks the whole AST once per relation, so together they cost
 about 584 instructions × R × N, with R the relations after `.init`
-expansion and N the AST nodes (declarations, facts and rules alike).
-That fit 14 programs from 0.5G to 147G instructions with R² 0.995. So:
+expansion and N the AST nodes (declarations, facts and rules alike);
+that fit 14 programs from 0.5G to 147G instructions. So:
 
 - Every declared relation costs, used or not (about 4.7ms each in a
-  94k-node program), including the unused ones `imports.dl` brings in
-  (hundreds). Soufflé drops them only after these passes.
+  94k-node program), including the unused ones `imports.dl` brings in:
+  Soufflé drops them only after these passes.
 - Facts cost like rule nodes: a fact is 3–5 nodes, a rule about 20.
-- `inline` does not help: these passes run before inlining.
-- A component costs exactly what its expansion costs.
-- `.plan` is about neutral.
-- `-j` does nothing: the front end is single-threaded.
-- Shared predicates and merged relations cut both factors.
+- `inline` (these passes run before inlining), components (they cost
+  their expansion), `.plan` and `-j` (the front end is single-threaded)
+  don't reduce it. Shared predicates and merged relations cut both
+  factors.
 - `--show=transformed-ram` pays the same cost: the division audit
   above, and argus's `Argus.Souffle.input_relations`/`ram_io`.
 
@@ -320,18 +283,9 @@ relations, fewer copies of the same concept.
 
 **`run_rules/3` defaults are costly for a custom program**: without
 `stage0: :provided` it compiles the whole program once just to learn
-whether it reads points-to. Derive stage 0 yourself
-(`derive_stage0/2`), then pass `stage0: :provided`.
-
-**Keep coverage in mind.** Lowering a depth, dropping cases or narrowing
-a word buys speed with findings. That can be the right trade, but make
-it knowingly, and say which way the change errs (quiet or loud, in
-`docs/bug-classes.md`'s terms). Argus's own default is quiet: a fact
-that cannot be sure says `"dynamic"`, and rules ask what is not handled.
-
-**Bound work by the facts, not the clock.** A result must be a function
-of the facts: cap a relation with `.limitsize` (Soufflé stops there
-however fast it runs, as `points_to.dl` does), never with a timeout.
+whether it reads points-to. Derive stage 0 yourself (`derive_stage0/2`,
+and `derive_points_to/2` if the program reads points-to), then pass
+`stage0: :provided`.
 
 **A fixpoint several analyses need is a stage, not an include.** An
 include recomputes it in every solve that reads it; a stage (like
@@ -339,11 +293,3 @@ include recomputes it in every solve that reads it; a stage (like
 writes only what the analyses read. Measure first: removing a bounds walk
 that looked costly saved 0.1s of 13s. The iteration count and the join
 order were what cost.
-
-## Checking a change changes nothing
-
-Before a refactor, snapshot every output relation plus the value
-relations that feed findings (`.output` them in a probe program that
-includes the rules), sorted, and the extracted facts. After it, diff row
-for row, and run the tests. Keep the probe out of the package (under
-`_build/`).

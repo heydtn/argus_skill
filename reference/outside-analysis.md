@@ -2,11 +2,22 @@
 
 Argus's catalog discovers analyses only among the `:argus_beam`
 application's modules (`Argus.Analysis.Catalog`), so `Argus.Driver`,
-`mix argus` and the `:argus` compiler never run yours. An outside package
-implements the `Argus.Analysis` behaviour for its outputs and findings,
-and brings its own runner, placement and Mix task. The template is
+`mix argus` and the `:argus` compiler never run yours, and `mix argus`'s
+internals are private. An outside package implements the
+`Argus.Analysis` behavior for its outputs and findings, and brings its
+own runner, placement and Mix task. The template is
 `github.com/heydtn/argus_nx_tensor_analyses` (read its
-`lib/argus_nx_tensor_analyses/tensor_shapes.ex` and its Mix task).
+`lib/argus_nx_tensor_analyses/tensor_shapes.ex` and its Mix task):
+
+```
+lib/<package>.ex                       # analyses/0: the Argus.Analysis modules
+lib/<package>/<analysis>.ex            # Argus.Analysis: outputs, findings, runner, placement
+lib/<package>/<analysis>/<extractor>.ex
+lib/mix/tasks/<package>.ex             # `mix argus` plus these analyses
+priv/<analysis>.dl                     # the rules
+test/<package>/<analysis>_test.exs     # fixtures compiled into a temp dir
+.github/workflows/ci.yml               # Soufflé 2.5, on x86
+```
 
 This is the route argus itself points to. The query graph's API
 (`Argus.analyze/3`, `Argus.Analysis.extract_facts/3`) runs only the
@@ -14,7 +25,7 @@ built-in extractors, and raises on `:extractors`: "for another
 extractor's rows, extract with Argus.Pipeline.extract/2 and solve with
 Argus.Analysis.run_rules/3" (`Argus.Run.check_options!/1`). The
 `Argus.Extractor` moduledoc still suggests passing `:extractors` to
-`extract_facts/3`, which raises in 0.20.
+`extract_facts/3`, which raises.
 
 ## The analysis module
 
@@ -70,15 +81,10 @@ defmodule MyPackage.MyAnalysis do
 end
 ```
 
-Also useful: `key` may pick per-kind keys (`{column, %{"value" => [...],
-default: [...]}}`), `earliest: :column` keeps the earliest instruction
-of the rows a key folds, and `retier: :tooling` ties into argus's
-handling of code only developers' tools run (`Argus.Findings.Tooling`,
-`clientlib/tooling.dl`; read them before using it). The rest of `Findings.new/4`'s options: `:to` (a
-span's end), `:to_block`, `:at_source` (a source token that moves the
-anchor), `:related`, `:provenance`, `:confidence`. Anchors:
-`at_instr/1`, `at_func/1`, `at_mfa/3`, `at_module/1`, `at_site/2`,
-`at_site_in_func/3`. `Findings.call_name/1` spells a callee for prose.
+`lib/argus/analysis.ex` documents the rest of an output relation (a
+per-kind `key`, `earliest:`, and `retier: :tooling`, which ties into
+`Argus.Findings.Tooling` and `clientlib/tooling.dl`: read them first),
+and `Argus.Findings` the rest of `new/4`'s options and the anchors.
 Severities are `:error`, `:warning` and `:info`.
 
 ## The runner
@@ -129,8 +135,9 @@ on `PATH`; `Argus.Driver.Result.souffle_missing?/1` tells.
 argus keys its own solves:
 - every extracted `.facts` file except `line_info.facts` (a comment moves
   lines, not code);
-- the program and the rules without their comments
-  (`Argus.Souffle.Program.uncommented/1`: a comment is not an edit);
+- the program and every file it includes, argus's too, without their
+  comments (`Argus.Souffle.Program.uncommented/1`: a comment is not an
+  edit), since argus's rules can change under one version number;
 - argus's version;
 - the solver, `Argus.Souffle.version(Argus.Souffle.executable())`, so an
   upgraded Soufflé solves again.
@@ -168,10 +175,10 @@ shape:
    failing only on errors from compilers other than `"argus"`.
 4. `config = Argus.CLI.override(Argus.Config.load(), options)`, then
    `result = Argus.Driver.run(config, force: options.force)`.
-5. Run yours over `Path.wildcard(Path.join(Mix.Project.compile_path(), "*.beam"))`
-   (the project's own beams) with a cache under
-   `Mix.Project.build_path()`, and `Map.put(result.located, name,
-   {:ok, located})`.
+5. Run yours over the project's own beams
+   (`Mix.Project.compile_path() |> Path.join("*.beam") |> Path.wildcard()`)
+   with a cache under `Mix.Project.build_path()`, and
+   `Map.put(result.located, name, {:ok, located})`.
 6. `Argus.Report.Notice.from_result(result, config, cwd)`, then
    `Argus.CLI.report(result, notices, config, options, cwd, cwd)`, then
    honor `options.fail_above`.
@@ -192,14 +199,9 @@ The consuming project aliases it over `mix argus`:
 - A module that is not `async: true` says why in a comment above its
   `use ExUnit.Case` (compiling fixtures loads them into the VM;
   capturing `:stderr` is shared).
-- Test the Mix task in a separate VM against a small Mix project, as
-  argus tests its own (its helpers are in its `test/support`, not the
-  hex package). The traps argus lists: `Mix.Project.in_project/3` caches
-  a project by its app atom (one per distinct config); run
-  `Mix.Task.clear()` first, and compile with `--return-errors
-  --no-prune-code-paths`; edits within one second are invisible to the
-  compiler's staleness check (`File.touch!` forward); diagnostic paths
-  are realpaths (`/private/var` on macOS).
+- Test a Mix task in a separate VM against a small Mix project, as argus
+  tests its own (its helpers are in its `test/support`, not the hex
+  package; `CLAUDE.md` at `v0.20.1` lists the Mix traps).
 - An oracle helps where one exists: the tensor analysis runs each fixture
   through Nx and checks that Nx raises exactly where the analysis says.
 

@@ -5,15 +5,15 @@ An agent skill for building analyses on [Argus](https://github.com/QuinnWilton/a
 extracted from compiled BEAM modules, with an Elixir extractor and
 findings.
 
-It gives an agent what it would otherwise have to dig out of argus's
-source: where the code and docs are, the extractor helpers and what each
-of argus's own extractors already emits, the base facts, call graph and
-shared rule library, argus's rule style and principles, Soufflé's traps
-and performance levers, and a template for an analysis package that
-lives outside argus (runner, caching, finding placement, Mix task, tests
-and CI). It covers built-in analyses in argus's own repo too.
+It points an agent at argus's own docs and source, and adds what they
+don't say: making rules demand-driven and writing them top down,
+Soufflé's traps and performance levers, what argus's extractors and
+shared words mean, and a template for an analysis package that lives
+outside argus (runner, caching, finding placement, Mix task, tests and
+CI). It covers built-in analyses in argus's own repo too.
 
-Written against argus_beam 0.20.1 and Soufflé 2.5.
+Written against argus_beam 0.20.1 and Soufflé 2.5, with doc pointers to
+argus's `main`, which reorganized its docs after 0.20.1.
 
 ## Install
 
@@ -40,7 +40,7 @@ it by name.
   built-in analysis to copy.
 - `reference/extractors.md`: the extractor contract and the shared
   helpers.
-- `reference/datalog.md`: the facts, the call graph, the shared words,
+- `reference/datalog.md`: what a program starts from, the shared words,
   the rule style, Soufflé's traps and performance.
 - `reference/outside-analysis.md`: an analysis argus does not ship.
 
